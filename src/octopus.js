@@ -518,6 +518,116 @@ class Octopus {
     }
   }
 
+  async pull() {
+    if (!this.config) {
+      console.log(chalk.red('❌ Execute "oct init" primeiro!'));
+      return;
+    }
+
+    console.log(chalk.blue('🐙 Fazendo pull das mudanças remotas...\n'));
+
+    let successCount = 0;
+    let errorCount = 0;
+    let upToDateCount = 0;
+
+    for (const repo of this.config.repositories) {
+      if (!repo.active) continue;
+
+      const repoPath = path.resolve(process.cwd(), repo.localPath);
+      
+      if (!fs.existsSync(repoPath)) {
+        console.log(chalk.yellow(`⚠️  ${repo.name} não encontrado em ${repoPath}`));
+        continue;
+      }
+
+      const spinner = ora(`${repo.name}: verificando branch atual`).start();
+
+      try {
+        const git = simpleGit(repoPath);
+        
+        // Verificar branch atual
+        const status = await git.status();
+        const currentBranch = status.current;
+        
+        if (!currentBranch) {
+          spinner.fail(chalk.red(`❌ ${repo.name}: não foi possível determinar a branch atual`));
+          errorCount++;
+          continue;
+        }
+
+        // Verificar se há mudanças não commitadas
+        if (status.files.length > 0) {
+          spinner.text = `${repo.name}: verificando mudanças locais`;
+          
+          const hasUncommittedChanges = status.files.some(file => 
+            file.working_dir === 'M' || file.working_dir === 'A' || file.working_dir === 'D' || 
+            file.index === 'M' || file.index === 'A' || file.index === 'D'
+          );
+
+          if (hasUncommittedChanges) {
+            spinner.warn(chalk.yellow(`⚠️  ${repo.name}: possui mudanças não commitadas na branch "${currentBranch}" - pulando`));
+            continue;
+          }
+        }
+
+        // Fazer pull
+        spinner.text = `${repo.name}: fazendo pull da branch "${currentBranch}"`;
+        
+        // Primeiro fazer fetch para verificar se há atualizações
+        await git.fetch();
+        
+        // Verificar se há commits remotos para puxar
+        const localCommit = await git.revparse(['HEAD']);
+        const remoteCommit = await git.revparse([`origin/${currentBranch}`]);
+        
+        if (localCommit === remoteCommit) {
+          spinner.succeed(chalk.blue(`✅ ${repo.name}: já está atualizado (${currentBranch})`));
+          upToDateCount++;
+        } else {
+          // Há atualizações, fazer pull
+          await git.pull('origin', currentBranch);
+          spinner.succeed(chalk.green(`✅ ${repo.name}: pull concluído (${currentBranch})`));
+          successCount++;
+        }
+      } catch (error) {
+        const errorMessage = error.message.toLowerCase();
+        
+        if (errorMessage.includes('no tracking information') || errorMessage.includes('no upstream branch')) {
+          spinner.warn(chalk.yellow(`⚠️  ${repo.name}: sem branch remota configurada - pulando`));
+        } else if (errorMessage.includes('merge conflict') || errorMessage.includes('conflict')) {
+          spinner.fail(chalk.red(`❌ ${repo.name}: conflito de merge detectado`));
+          errorCount++;
+        } else {
+          spinner.fail(chalk.red(`❌ ${repo.name}: ${error.message.split('\n')[0]}`));
+          errorCount++;
+        }
+      }
+    }
+
+    // Mostrar resumo final
+    console.log('');
+    
+    if (successCount > 0) {
+      console.log(chalk.green(`🎉 ${successCount} repositório(s) atualizados com sucesso!`));
+    }
+    
+    if (upToDateCount > 0) {
+      console.log(chalk.blue(`ℹ️  ${upToDateCount} repositório(s) já estavam atualizados`));
+    }
+    
+    if (errorCount > 0) {
+      console.log(chalk.yellow(`⚠️  ${errorCount} repositório(s) tiveram problemas no pull`));
+    }
+
+    // Dicas úteis
+    if (errorCount > 0) {
+      console.log(chalk.blue('\n💡 Dicas para resolver problemas:'));
+      console.log(chalk.gray('   • Conflitos: resolva manualmente com "git status" e "git merge"'));
+      console.log(chalk.gray('   • Sem upstream: configure com "git branch --set-upstream-to=origin/branch"'));
+      console.log(chalk.gray('   • Mudanças locais: commit ou stash antes do pull'));
+    }
+  }
+
   async install() {
     if (!this.config) {
       console.log(chalk.red('❌ Execute "oct init" primeiro!'));

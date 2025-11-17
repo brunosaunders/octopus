@@ -48,6 +48,13 @@ program
   });
 
 program
+  .command('pull')
+  .description('Pull latest changes from remote for all repositories on their active branch')
+  .action(async () => {
+    await octopus.pull();
+  });
+
+program
   .command('install')
   .description('Run npm install in all repositories')
   .action(async () => {
