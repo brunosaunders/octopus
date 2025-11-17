@@ -40,7 +40,10 @@ yarn oct ios        # Build iOS + logs
 | `yarn oct ios` | 🍎 Build iOS + logs em terminais separados |
 | `yarn oct update-sdk <version>` | 🔄 Atualiza SDK configurado em todos os módulos |
 | `yarn oct checkout <branch>` | Checkout + pull em todos os repositórios |
+| `yarn oct checkout <branch> --local -l` | Checkout local sem pull do remoto |
 | `yarn oct new-branch <name> [base]` | Cria nova branch em todos os repos |
+| `yarn oct delete-branch <name>` | Deleta branch local em todos os repos (com confirmação) |
+| `yarn oct pull` | Pull das mudanças remotas em todos os repos na branch ativa |
 | `yarn oct status` | Status Git de todos os repositórios |
 | `yarn oct list` | Lista repositórios configurados |
 
@@ -65,9 +68,12 @@ yarn oct start
 # ✅ Executa todos em paralelo no terminal
 ```
 
-### Outros comandos úteis
+### Comandos Git úteis
 ```bash
-yarn oct checkout develop    # Atualiza todos para develop
+yarn oct checkout develop           # Checkout + pull em todos para develop
+yarn oct checkout -l feature/login  # Checkout local sem pull do remoto
+yarn oct pull                       # Pull da branch ativa em todos os repos
+yarn oct delete-branch old-feature  # Deleta branch local (com confirmação)
 # Use VS Code Tasks: Cmd+Shift+P → "Tasks: Run Task"
 ```
 
@@ -83,12 +89,22 @@ yarn oct update-sdk 0.3.0  # 🔄 Atualiza SDK em todos os módulos
 # ✅ Atualiza package.json → yarn install → yarn fix-dependencies → yarn install
 ```
 
-### Nova feature
+### Workflow de desenvolvimento
 ```bash
+# Criar nova feature (faz pull da branch de referência antes de criar a nova branch)
 yarn oct new-branch feature/login develop  # Cria branch em todos
+yarn oct checkout feature/login            # Muda para a branch (com pull)
+
+# Desenvolvimento local - branches já criadas anteriormente e deseja-se continuar o trabalho (se branch não existir, equivale ao git checkout -b)
+yarn oct checkout -l feature/login       # Checkout sem pull (antes e depois) (mais rápido)
+yarn oct pull                             # Pull quando necessário
+
 # ... desenvolvimento ...
-oct lint               # Lint por projeto
-oct test              # Testes por projeto
+yarn oct lint                             # Lint por projeto
+yarn oct test                             # Testes por projeto
+
+# Limpeza após merge
+yarn oct delete-branch feature/login      # Deleta branch local (com confirmação) - equivale ao git branch -d <branch>
 ```
 
 ### 🖥️ VS Code Integration
