@@ -337,8 +337,13 @@ class Octopus {
           await git.pull();
           spinner.succeed(chalk.green(`✅ ${repo.name}: checkout e pull concluídos`));
         } else {
-          await git.checkoutLocalBranch(branch);
-          spinner.succeed(chalk.green(`✅ ${repo.name}: checkout local concluído`));
+          try {
+            await git.checkout(branch);
+            spinner.succeed(chalk.green(`✅ ${repo.name}: checkout local concluído`));
+          } catch (error) {
+            await git.checkoutLocalBranch(branch);
+            spinner.succeed(chalk.green(`✅ ${repo.name}: branch criada e checkout local concluído`));
+          }
         }
       } catch (error) {
         spinner.fail(chalk.red(`❌ ${repo.name}: ${error.message}`));
