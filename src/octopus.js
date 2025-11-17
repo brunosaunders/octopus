@@ -386,6 +386,138 @@ class Octopus {
     console.log(chalk.green(`\n🎉 Branch "${name}" criada em todos os repositórios!`));
   }
 
+  async deleteBranch(name) {
+    if (!this.config) {
+      console.log(chalk.red('❌ Execute "oct init" primeiro!'));
+      return;
+    }
+
+    const defaultBranch = this.config.settings.defaultBranch || 'main';
+    
+    // Verificar se está tentando deletar a branch padrão
+    if (name === defaultBranch) {
+      console.log(chalk.red(`❌ Não é possível deletar a branch padrão "${defaultBranch}"!`));
+      return;
+    }
+
+    // Coletar informações sobre as branches nos repositórios
+    const reposWithBranch = [];
+    const validRepos = [];
+
+    console.log(chalk.blue(`🐙 Verificando branch "${name}" nos repositórios...\n`));
+
+    for (const repo of this.config.repositories) {
+      if (!repo.active) continue;
+
+      const repoPath = path.resolve(process.cwd(), repo.localPath);
+      
+      if (!fs.existsSync(repoPath)) {
+        console.log(chalk.yellow(`⚠️  ${repo.name} não encontrado em ${repoPath}`));
+        continue;
+      }
+
+      validRepos.push(repo);
+
+      try {
+        const git = simpleGit(repoPath);
+        const branches = await git.branchLocal();
+        
+        if (branches.all.includes(name)) {
+          reposWithBranch.push({
+            ...repo,
+            repoPath,
+            isCurrentBranch: branches.current === name
+          });
+          
+          const status = branches.current === name ? '(atual)' : '';
+          console.log(chalk.cyan(`✅ ${repo.name}: branch "${name}" encontrada ${status}`));
+        } else {
+          console.log(chalk.gray(`ℹ️  ${repo.name}: branch "${name}" não existe`));
+        }
+      } catch (error) {
+        console.log(chalk.red(`❌ ${repo.name}: erro ao verificar branches - ${error.message}`));
+      }
+    }
+
+    if (reposWithBranch.length === 0) {
+      console.log(chalk.yellow(`\n⚠️  Branch "${name}" não foi encontrada em nenhum repositório!`));
+      return;
+    }
+
+    // Mostrar resumo e solicitar confirmação
+    console.log(chalk.blue(`\n📋 Resumo da operação:`));
+    console.log(chalk.gray(`   Branch a deletar: ${name}`));
+    console.log(chalk.gray(`   Repositórios afetados: ${reposWithBranch.length}/${validRepos.length}`));
+    
+    const reposWithCurrentBranch = reposWithBranch.filter(repo => repo.isCurrentBranch);
+    if (reposWithCurrentBranch.length > 0) {
+      console.log(chalk.yellow(`   ⚠️  Branch atual em: ${reposWithCurrentBranch.map(r => r.name).join(', ')}`));
+      console.log(chalk.yellow(`   (será feito checkout para "${defaultBranch}" antes da deleção)`));
+    }
+
+    console.log('');
+
+    // Solicitar confirmação do usuário
+    const { confirmDelete } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'confirmDelete',
+        message: `Tem certeza que deseja deletar a branch local "${name}"?`,
+        default: false
+      }
+    ]);
+
+    if (!confirmDelete) {
+      console.log(chalk.gray('Operação cancelada pelo usuário.'));
+      return;
+    }
+
+    // Executar deleção
+    console.log(chalk.blue(`\n🐙 Deletando branch "${name}"...\n`));
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const repo of reposWithBranch) {
+      const spinner = ora(`${repo.name}: deletando branch ${name}`).start();
+
+      try {
+        const git = simpleGit(repo.repoPath);
+        
+        // Se a branch é a atual, fazer checkout para a branch padrão primeiro
+        if (repo.isCurrentBranch) {
+          spinner.text = `${repo.name}: fazendo checkout para ${defaultBranch}`;
+          await git.checkout(defaultBranch);
+        }
+        
+        // Deletar a branch local
+        spinner.text = `${repo.name}: deletando branch ${name}`;
+        await git.deleteLocalBranch(name);
+        
+        spinner.succeed(chalk.green(`✅ ${repo.name}: branch "${name}" deletada`));
+        successCount++;
+      } catch (error) {
+        spinner.fail(chalk.red(`❌ ${repo.name}: ${error.message}`));
+        errorCount++;
+      }
+    }
+
+    // Mostrar resumo final
+    console.log('');
+    if (successCount > 0) {
+      console.log(chalk.green(`🎉 Branch "${name}" deletada com sucesso em ${successCount} repositório(s)!`));
+    }
+    if (errorCount > 0) {
+      console.log(chalk.yellow(`⚠️  ${errorCount} repositório(s) tiveram problemas na deleção.`));
+    }
+
+    // Sugestão adicional
+    if (successCount > 0) {
+      console.log(chalk.blue('\n💡 Dica: Para deletar branches remotas, use:'));
+      console.log(chalk.gray(`   git push origin --delete ${name}`));
+    }
+  }
+
   async install() {
     if (!this.config) {
       console.log(chalk.red('❌ Execute "oct init" primeiro!'));

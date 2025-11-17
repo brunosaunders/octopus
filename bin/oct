@@ -41,6 +41,13 @@ program
   });
 
 program
+  .command('delete-branch <name>')
+  .description('Delete local branch in all repositories (requires confirmation)')
+  .action(async (name) => {
+    await octopus.deleteBranch(name);
+  });
+
+program
   .command('install')
   .description('Run npm install in all repositories')
   .action(async () => {
