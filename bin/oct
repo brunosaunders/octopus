@@ -28,8 +28,9 @@ program
 program
   .command('checkout <branch>')
   .description('Checkout and pull branch in all repositories')
-  .action(async (branch) => {
-    await octopus.checkout(branch);
+  .option('-l, --local', 'checkout locally without pulling from remote')
+  .action(async (branch, options) => {
+    await octopus.checkout(branch, options.local);
   });
 
 program

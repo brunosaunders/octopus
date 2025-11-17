@@ -307,13 +307,14 @@ class Octopus {
     }
   }
 
-  async checkout(branch) {
+  async checkout(branch, local = false) {
     if (!this.config) {
       console.log(chalk.red('❌ Execute "oct init" primeiro!'));
       return;
     }
 
-    console.log(chalk.blue(`🐙 Fazendo checkout para branch "${branch}"...\n`));
+    const operation = local ? 'checkout local' : 'checkout e pull';
+    console.log(chalk.blue(`🐙 Fazendo ${operation} para branch "${branch}"...\n`));
 
     for (const repo of this.config.repositories) {
       if (!repo.active) continue;
@@ -325,19 +326,29 @@ class Octopus {
         continue;
       }
 
-      const spinner = ora(`${repo.name}: checkout ${branch}`).start();
+      const spinnerText = local ? `${repo.name}: checkout local ${branch}` : `${repo.name}: checkout ${branch}`;
+      const spinner = ora(spinnerText).start();
 
       try {
         const git = simpleGit(repoPath);
-        await git.checkout(branch);
-        await git.pull();
-        spinner.succeed(chalk.green(`✅ ${repo.name}: checkout e pull concluídos`));
+        
+        if (!local) {
+          await git.checkout(branch);
+          await git.pull();
+          spinner.succeed(chalk.green(`✅ ${repo.name}: checkout e pull concluídos`));
+        } else {
+          await git.checkoutLocalBranch(branch);
+          spinner.succeed(chalk.green(`✅ ${repo.name}: checkout local concluído`));
+        }
       } catch (error) {
         spinner.fail(chalk.red(`❌ ${repo.name}: ${error.message}`));
       }
     }
 
-    console.log(chalk.green('\n🎉 Checkout concluído em todos os repositórios!'));
+    const successMessage = local ? 
+      '\n🎉 Checkout local concluído em todos os repositórios!' : 
+      '\n🎉 Checkout concluído em todos os repositórios!';
+    console.log(chalk.green(successMessage));
   }
 
   async newBranch(name, base) {
