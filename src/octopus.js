@@ -1348,13 +1348,35 @@ class Octopus {
 
     console.log(chalk.blue('🐙 Repositórios configurados:\n'));
 
-    this.config.repositories.forEach(repo => {
+    for (const repo of this.config.repositories) {
       const icon = repo.active ? '✅' : '❌';
+      const repoPath = path.resolve(process.cwd(), repo.localPath);
+      
       console.log(chalk.cyan(`${icon} ${repo.name}`));
       console.log(chalk.gray(`   ${repo.description}`));
       console.log(chalk.gray(`   Porta: ${repo.port} | Prioridade: ${repo.priority}`));
+      
+      // Verificar branch atual se o repositório existe
+      if (fs.existsSync(repoPath)) {
+        try {
+          const git = simpleGit(repoPath);
+          const status = await git.status();
+          const currentBranch = status.current || 'detached HEAD';
+          
+          // Verificar se há mudanças não commitadas
+          const hasChanges = status.files.length > 0;
+          const changesIndicator = hasChanges ? ' (com mudanças)' : '';
+          
+          console.log(chalk.gray(`   Branch: ${currentBranch}${changesIndicator}`));
+        } catch (error) {
+          console.log(chalk.gray(`   Branch: erro ao verificar (${error.message.split('\n')[0]})`));
+        }
+      } else {
+        console.log(chalk.gray(`   Branch: repositório não clonado`));
+      }
+      
       console.log('');
-    });
+    }
   }
 
   async createVSCodeWorkspace() {
