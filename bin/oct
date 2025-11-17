@@ -83,6 +83,13 @@ program
   });
 
 program
+  .command('adb-reverse')
+  .description('Configure ADB reverse for all repository ports (Android development)')
+  .action(async () => {
+    await octopus.adbReverse();
+  });
+
+program
   .command('update-sdk <version>')
   .description('Update @drbf17/react-native-webview SDK version in all modules')
   .action(async (version) => {

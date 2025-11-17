@@ -38,6 +38,7 @@ yarn oct ios        # Build iOS + logs
 | `yarn oct test` | Testes em terminais separados por projeto |
 | `yarn oct android` | 🤖 Build Android + logs em terminais separados |
 | `yarn oct ios` | 🍎 Build iOS + logs em terminais separados |
+| `yarn oct adb-reverse` | 📱 Configura ADB reverse para todas as portas (Android) |
 | `yarn oct update-sdk <version>` | 🔄 Atualiza SDK configurado em todos os módulos |
 | `yarn oct checkout <branch>` | Checkout + pull em todos os repositórios |
 | `yarn oct new-branch <name> [base]` | Cria nova branch em todos os repos |
@@ -71,9 +72,13 @@ yarn oct checkout develop    # Atualiza todos para develop
 # Use VS Code Tasks: Cmd+Shift+P → "Tasks: Run Task"
 ```
 
-### Desenvolvimento nativo (Host app)
+### Desenvolvimento nativo
 ```bash
-yarn oct android            # 🤖 Abre 2 terminais: Build + Logs Android
+# Android
+yarn oct android           # 🤖 Abre 2 terminais: Build + Logs Android
+yarn oct adb-reverse       # 📱 Configura ADB reverse para todas as portas
+
+# iOS  
 yarn oct ios               # 🍎 Abre 2 terminais: Build + Logs iOS
 ```
 

@@ -1606,6 +1606,86 @@ pause >nul`;
     throw new Error(`Todas as estratégias falharam para ${repo.name} com prefix '${repo.prefix}'`);
   }
 
+  async adbReverse() {
+    console.log(chalk.blue('🔄 Configurando ADB reverse para todos os repositórios...'));
+    
+    // Primeiro, verificar se adb está disponível
+    try {
+      await execa('adb', ['devices']);
+    } catch (error) {
+      console.log(chalk.red('❌ ADB não encontrado. Certifique-se de que o Android SDK está instalado e no PATH.'));
+      return;
+    }
+
+    const activeRepos = this.config.repositories.filter(repo => repo.active && repo.port);
+    
+    if (activeRepos.length === 0) {
+      console.log(chalk.yellow('⚠️  Nenhum repositório ativo com porta configurada encontrado.'));
+      return;
+    }
+
+    console.log(chalk.cyan(`📱 Configurando reverse para ${activeRepos.length} repositório(s):\n`));
+
+    const spinner = ora('Executando comandos ADB reverse...').start();
+    const successfulRepos = [];
+    const failedRepos = [];
+    
+    try {
+      for (const repo of activeRepos) {
+        const port = repo.port;
+        spinner.text = `Configurando reverse para ${repo.name} (porta ${port})...`;
+        
+        try {
+          await execa('adb', ['reverse', `tcp:${port}`, `tcp:${port}`]);
+          successfulRepos.push({ name: repo.name, port });
+          console.log(chalk.green(`✅ [${repo.name}] tcp:${port} -> tcp:${port}`));
+        } catch (error) {
+          failedRepos.push({ name: repo.name, port, error: error.message });
+          console.log(chalk.red(`❌ [${repo.name}] Falhou reverse para porta ${port}: ${error.message}`));
+        }
+      }
+      
+      // Determinar status geral e mensagem apropriada
+      if (failedRepos.length === 0) {
+        spinner.succeed(chalk.green('🎉 ADB reverse configurado com sucesso para todos os repositórios!'));
+      } else if (successfulRepos.length === 0) {
+        spinner.fail(chalk.red('❌ Falha ao configurar ADB reverse para todos os repositórios!'));
+      } else {
+        spinner.warn(chalk.yellow('⚠️  ADB reverse configurado parcialmente - alguns repositórios falharam!'));
+      }
+      
+      // Exibir resumo detalhado
+      console.log(chalk.cyan('\n� Resumo da operação:'));
+      
+      if (successfulRepos.length > 0) {
+        console.log(chalk.green(`\n✅ Repositórios configurados com sucesso (${successfulRepos.length}):`));
+        successfulRepos.forEach(repo => {
+          console.log(chalk.gray(`   • ${repo.name}: tcp:${repo.port} -> tcp:${repo.port}`));
+        });
+      }
+      
+      if (failedRepos.length > 0) {
+        console.log(chalk.red(`\n❌ Repositórios com falha (${failedRepos.length}):`));
+        failedRepos.forEach(repo => {
+          console.log(chalk.gray(`   • ${repo.name}: tcp:${repo.port} - ${repo.error.split('\n')[0]}`));
+        });
+        
+        console.log(chalk.yellow('\n� Possíveis soluções para falhas:'));
+        console.log(chalk.gray('   • Verifique se o dispositivo Android está conectado: adb devices'));
+        console.log(chalk.gray('   • Ative a depuração USB no dispositivo'));
+        console.log(chalk.gray('   • Reinicie o servidor ADB: adb kill-server && adb start-server'));
+        console.log(chalk.gray('   • Verifique se as portas não estão sendo usadas por outros processos'));
+      }
+      
+      console.log(chalk.blue(`\n📱 Total processado: ${activeRepos.length} repositório(s)`));
+      console.log(chalk.yellow('\n�💡 Dica: Execute este comando sempre que conectar um novo dispositivo Android.'));
+      
+    } catch (error) {
+      spinner.fail(chalk.red('❌ Erro crítico ao executar ADB reverse'));
+      console.log(chalk.red(`Erro: ${error.message}`));
+    }
+  }
+
 
 }
 
