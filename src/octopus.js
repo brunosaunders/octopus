@@ -316,6 +316,8 @@ class Octopus {
     const operation = local ? 'checkout local' : 'checkout e pull';
     console.log(chalk.blue(`🐙 Fazendo ${operation} para branch "${branch}"...\n`));
 
+    // Prepare list of valid repositories
+    const validRepos = [];
     for (const repo of this.config.repositories) {
       if (!repo.active) continue;
 
@@ -326,11 +328,24 @@ class Octopus {
         continue;
       }
 
+      validRepos.push({ ...repo, repoPath });
+    }
+
+    if (validRepos.length === 0) {
+      console.log(chalk.yellow('⚠️  Nenhum repositório válido encontrado!'));
+      return;
+    }
+
+    // First pass: try checkout on all repositories
+    const failedRepos = [];
+    let successCount = 0;
+
+    for (const repo of validRepos) {
       const spinnerText = local ? `${repo.name}: checkout local ${branch}` : `${repo.name}: checkout ${branch}`;
       const spinner = ora(spinnerText).start();
 
       try {
-        const git = simpleGit(repoPath);
+        const git = simpleGit(repo.repoPath);
         
         if (!local) {
           await git.checkout(branch);
@@ -341,19 +356,255 @@ class Octopus {
             await git.checkout(branch);
             spinner.succeed(chalk.green(`✅ ${repo.name}: checkout local concluído`));
           } catch (error) {
-            await git.checkoutLocalBranch(branch);
-            spinner.succeed(chalk.green(`✅ ${repo.name}: branch criada e checkout local concluído`));
+            // If branch doesn't exist, create it
+            if (error.message.includes('pathspec') || error.message.includes('did not match')) {
+              await git.checkoutLocalBranch(branch);
+              spinner.succeed(chalk.green(`✅ ${repo.name}: branch criada e checkout local concluído`));
+            } else {
+              throw error;
+            }
           }
         }
+        successCount++;
       } catch (error) {
-        spinner.fail(chalk.red(`❌ ${repo.name}: ${error.message}`));
+        // Check if error is due to uncommitted changes that would be overwritten
+        const isUncommittedChangesError = 
+          error.message.includes('would be overwritten by checkout') ||
+          error.message.includes('Please commit your changes or stash them') ||
+          error.message.includes('Your local changes to the following files would be overwritten');
+
+        if (isUncommittedChangesError) {
+          spinner.warn(chalk.yellow(`⚠️  ${repo.name}: mudanças não commitadas impedem o checkout`));
+          failedRepos.push({ ...repo, error });
+        } else {
+          spinner.fail(chalk.red(`❌ ${repo.name}: ${error.message}`));
+        }
       }
     }
 
-    const successMessage = local ? 
-      '\n🎉 Checkout local concluído em todos os repositórios!' : 
-      '\n🎉 Checkout concluído em todos os repositórios!';
-    console.log(chalk.green(successMessage));
+    // Handle repositories that failed due to uncommitted changes
+    if (failedRepos.length > 0) {
+      console.log(chalk.yellow('\n⚠️  Alguns repositórios falharam devido a mudanças não commitadas:\n'));
+      
+      // Show which files would be affected for each repository
+      for (const repo of failedRepos) {
+        console.log(chalk.cyan(`📁 ${repo.name}:`));
+        
+        try {
+          const git = simpleGit(repo.repoPath);
+          const status = await git.status();
+          
+          status.files.forEach(file => {
+            const statusSymbol = file.working_dir || file.index || '??';
+            console.log(chalk.gray(`   ${statusSymbol} ${file.path}`));
+          });
+        } catch (statusError) {
+          console.log(chalk.gray(`   Erro ao obter status: ${statusError.message}`));
+        }
+        console.log('');
+      }
+
+      const { action } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'action',
+          message: `Como proceder com os ${failedRepos.length} repositório(s) que falharam?`,
+          choices: [
+            {
+              name: '🗃️  Stash e retry (salvar mudanças temporariamente)',
+              value: 'stash'
+            },
+            {
+              name: '🚫 Descartar mudanças e retry (ATENÇÃO: irrecuperável!)',
+              value: 'discard'
+            },
+            {
+              name: '⏭️  Pular repositórios com problemas',
+              value: 'skip'
+            },
+            {
+              name: '🔄 Cancelar e reverter checkouts já realizados',
+              value: 'revert'
+            },
+            {
+              name: '❌ Cancelar operação',
+              value: 'cancel'
+            }
+          ],
+          default: 'stash'
+        }
+      ]);
+
+      if (action === 'cancel') {
+        console.log(chalk.gray('Operação cancelada pelo usuário.'));
+        return;
+      }
+
+      if (action === 'revert') {
+        // Revert successful checkouts back to their original branches
+        const successfulRepos = validRepos.filter(repo => 
+          !failedRepos.some(failed => failed.name === repo.name)
+        );
+
+        if (successfulRepos.length === 0) {
+          console.log(chalk.yellow('Nenhum checkout foi realizado com sucesso para reverter.'));
+          return;
+        }
+
+        console.log(chalk.blue(`\n🔄 Revertendo ${successfulRepos.length} checkout(s) realizado(s) com sucesso...\n`));
+
+        let revertSuccessCount = 0;
+        let revertErrorCount = 0;
+
+        for (const repo of successfulRepos) {
+          const spinner = ora(`${repo.name}: obtendo branch anterior`).start();
+
+          try {
+            const git = simpleGit(repo.repoPath);
+            
+            // Get the previous branch from reflog
+            spinner.text = `${repo.name}: verificando branch anterior`;
+            const reflog = await git.raw(['reflog', '--oneline', '-n', '10']);
+            const reflogLines = reflog.split('\n').filter(line => line.trim());
+            
+            // Look for the previous checkout in reflog
+            let previousBranch = null;
+            for (const line of reflogLines) {
+              const match = line.match(/checkout: moving from (.+) to/);
+              if (match && match[1] !== branch) {
+                previousBranch = match[1];
+                break;
+              }
+            }
+
+            if (!previousBranch) {
+              // Fallback: try to get from HEAD@{1}
+              try {
+                const headRef = await git.raw(['rev-parse', '--abbrev-ref', 'HEAD@{1}']);
+                previousBranch = headRef.trim();
+              } catch (headError) {
+                throw new Error('Não foi possível determinar a branch anterior');
+              }
+            }
+
+            spinner.text = `${repo.name}: revertendo para ${previousBranch}`;
+            await git.checkout(previousBranch);
+            
+            spinner.succeed(chalk.green(`✅ ${repo.name}: revertido para "${previousBranch}"`));
+            revertSuccessCount++;
+          } catch (error) {
+            spinner.fail(chalk.red(`❌ ${repo.name}: erro ao reverter - ${error.message}`));
+            revertErrorCount++;
+          }
+        }
+
+        console.log('');
+        if (revertSuccessCount > 0) {
+          console.log(chalk.green(`🎉 ${revertSuccessCount} repositório(s) revertidos com sucesso!`));
+        }
+        if (revertErrorCount > 0) {
+          console.log(chalk.yellow(`⚠️  ${revertErrorCount} repositório(s) tiveram problemas na reversão.`));
+        }
+        
+        console.log(chalk.gray('Operação cancelada e checkouts revertidos.'));
+        return;
+      }
+
+      if (action === 'skip') {
+        console.log(chalk.yellow(`⏭️  Pulando ${failedRepos.length} repositório(s) com problemas`));
+      } else {
+        if (action === 'discard') {
+          const { confirmDiscard } = await inquirer.prompt([
+            {
+              type: 'confirm',
+              name: 'confirmDiscard',
+              message: '⚠️  ATENÇÃO: Isso irá descartar TODAS as mudanças não commitadas. Tem certeza?',
+              default: false
+            }
+          ]);
+
+          if (!confirmDiscard) {
+            console.log(chalk.gray('Operação cancelada pelo usuário.'));
+            return;
+          }
+        }
+
+        // Handle repositories with changes and retry checkout
+        console.log(chalk.blue('\n🔄 Processando repositórios com problemas...\n'));
+
+        for (const repo of failedRepos) {
+          const spinner = ora(`${repo.name}: preparando para retry`).start();
+          
+          try {
+            const git = simpleGit(repo.repoPath);
+            
+            if (action === 'stash') {
+              spinner.text = `${repo.name}: fazendo stash das mudanças`;
+              const now = new Date();
+              const dateTime = now.toLocaleString('pt-BR', { 
+                day: '2-digit', 
+                month: '2-digit', 
+                year: 'numeric', 
+                hour: '2-digit', 
+                minute: '2-digit' 
+              });
+              await git.stash(['push', '-m', `Octopus auto-stash before checkout to ${branch} - ${dateTime}`]);
+              spinner.text = `${repo.name}: tentando checkout novamente`;
+            } else if (action === 'discard') {
+              spinner.text = `${repo.name}: descartando mudanças`;
+              await git.reset(['--hard', 'HEAD']);
+              await git.clean('f', ['-d']);
+              spinner.text = `${repo.name}: tentando checkout novamente`;
+            }
+
+            // Retry the checkout
+            if (!local) {
+              await git.checkout(branch);
+              await git.pull();
+              spinner.succeed(chalk.green(`✅ ${repo.name}: checkout e pull concluídos após ${action === 'stash' ? 'stash' : 'descartar mudanças'}`));
+            } else {
+              try {
+                await git.checkout(branch);
+                spinner.succeed(chalk.green(`✅ ${repo.name}: checkout local concluído após ${action === 'stash' ? 'stash' : 'descartar mudanças'}`));
+              } catch (error) {
+                // If branch doesn't exist, create it
+                if (error.message.includes('pathspec') || error.message.includes('did not match')) {
+                  await git.checkoutLocalBranch(branch);
+                  spinner.succeed(chalk.green(`✅ ${repo.name}: branch criada e checkout concluído após ${action === 'stash' ? 'stash' : 'descartar mudanças'}`));
+                } else {
+                  throw error;
+                }
+              }
+            }
+            successCount++;
+          } catch (error) {
+            spinner.fail(chalk.red(`❌ ${repo.name}: falhou mesmo após ${action === 'stash' ? 'stash' : 'descartar mudanças'} - ${error.message}`));
+          }
+        }
+      }
+    }
+
+    // Show final results
+    console.log('');
+    if (successCount > 0) {
+      const successMessage = local ? 
+        `🎉 Checkout local para "${branch}" concluído em ${successCount} repositório(s)!` : 
+        `🎉 Checkout para "${branch}" concluído em ${successCount} repositório(s)!`;
+      console.log(chalk.green(successMessage));
+    }
+
+    const finalFailedCount = validRepos.length - successCount;
+    if (finalFailedCount > 0) {
+      console.log(chalk.yellow(`⚠️  ${finalFailedCount} repositório(s) tiveram problemas no checkout.`));
+    }
+
+    // Show useful tips only if stash was used
+    if (failedRepos.length > 0 && successCount > validRepos.length - failedRepos.length) {
+      console.log(chalk.blue('\n💡 Dicas úteis:'));
+      console.log(chalk.gray('   • Use "git stash list" para ver stashes salvos'));
+      console.log(chalk.gray('   • Use "git stash pop" para restaurar a última stash'));
+      console.log(chalk.gray('   • Use "git stash apply stash@{n}" para aplicar stash específica'));
+    }
   }
 
   async newBranch(name, base) {
